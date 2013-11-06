@@ -34,6 +34,7 @@ class CA : public node::ObjectWrap {
   EVP_PKEY *ca_pkey;
   X509 *ca_cert;
   static v8::Handle<v8::Value> New(const v8::Arguments& args);
+  static v8::Handle<v8::Value> GenPKey(const v8::Arguments& args);
   static v8::Handle<v8::Value> LoadPKey(const v8::Arguments& args);
   static v8::Handle<v8::Value> LoadCA(const v8::Arguments& args);
   static v8::Handle<v8::Value> Gen(const v8::Arguments& args);

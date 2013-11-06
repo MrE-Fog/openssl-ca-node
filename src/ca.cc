@@ -25,6 +25,7 @@ void CA::Init(Handle<Object> exports) {
     tpl->PrototypeTemplate()->Set(String::NewSymbol("createCertificate"), FunctionTemplate::New(Gen)->GetFunction());
     tpl->PrototypeTemplate()->Set(String::NewSymbol("loadPrivateKey"), FunctionTemplate::New(LoadPKey)->GetFunction());
     tpl->PrototypeTemplate()->Set(String::NewSymbol("loadCA"), FunctionTemplate::New(LoadCA)->GetFunction());
+    tpl->PrototypeTemplate()->Set(String::NewSymbol("generatePrivateKey"), FunctionTemplate::New(GenPKey)->GetFunction());
     
     Persistent<Function> constructor = Persistent<Function>::New(tpl->GetFunction());
     exports->Set(String::NewSymbol("CA"), constructor);
@@ -35,6 +36,42 @@ Handle<Value> CA::New(const Arguments& args) {
     CA* obj = new CA();
     obj->Wrap(args.This());
     return args.This();
+}
+
+
+Handle<Value> CA::GenPKey(const Arguments& args) {
+    HandleScope scope;
+
+    CA* obj = ObjectWrap::Unwrap<CA>(args.This());
+    
+    int bits = 1024;
+    
+    if(args[0]->IsNumber())
+        bits = args[0]->NumberValue();
+    
+    
+    RSA* rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
+    obj->pkey = EVP_PKEY_new();
+    if (!EVP_PKEY_assign_RSA(obj->pkey, rsa)){
+        obj->pkey = NULL;
+        return ThrowException(Exception::Error(String::New("error EVP_PKEY_assign_RSA" )));
+    }
+    
+    BIO *bp = BIO_new(BIO_s_mem());
+    
+    PEM_write_bio_RSAPrivateKey(bp, rsa, NULL, NULL, 0, NULL, NULL);
+
+    BUF_MEM *bptr;
+    BIO_get_mem_ptr(bp, &bptr);
+    char *rsa_buf = (char *) malloc(bptr->length+1);
+    memcpy(rsa_buf, bptr->data, bptr->length-1);
+    rsa_buf[bptr->length-1] = 0;
+    Local<String> rsa_str = String::New(rsa_buf);
+    free(rsa_buf);
+    
+    BIO_free(bp);
+     
+    return scope.Close(rsa_str);
 }
 
 
@@ -51,7 +88,7 @@ Handle<Value> CA::LoadPKey(const Arguments& args) {
         data = node::Buffer::Data(buf);
         data_len = node::Buffer::Length(buf);
     }
-    else return ThrowException(Exception::Error(String::New( "PEM body must be a Buffer" )));
+    else return ThrowException(Exception::Error(String::New("PEM body must be a Buffer" )));
         
       
     BIO *bio = BIO_new_mem_buf(data, data_len);
@@ -136,17 +173,28 @@ Handle<Value> CA::Gen(const Arguments& args) {
     if(!obj->pkey) 
         return ThrowException(Exception::Error(String::New("error not load pkey ")));
         
-    X509_REQ *req = X509_REQ_new();
+        
+     X509 *xcert = X509_new();
+    
+    //#ifdef X509_V3
+       X509_set_version(xcert, 2);
+    // #endif
+   
+    //X509_REQ *req = X509_REQ_new();
     
     
-    if (!X509_REQ_set_version(req,0L))
-        return ThrowException(Exception::Error(String::New("error X509_REQ_set_version")));
+    //if (!X509_REQ_set_version(req,0L))
+    //   return ThrowException(Exception::Error(String::New("error X509_REQ_set_version")));
 
-    X509_NAME *subj  = X509_REQ_get_subject_name(req);
-    if(args[0]->IsObject()){    
+    Local<Object> arg_obj = args[0]->ToObject();
+    
+   // X509_NAME *subj  = X509_REQ_get_subject_name(req);
+    
+    X509_NAME *subj = X509_get_subject_name(xcert);
+    
+    if(arg_obj->Has(v8::String::NewSymbol("subject"))){    
         
-        
-        Local<Object> subj_obj = args[0]->ToObject();
+        Local<Object> subj_obj =  arg_obj->Get(v8::String::NewSymbol("subject"))->ToObject();
         Local<v8::Array> names = subj_obj->GetPropertyNames();
         
         for (unsigned int i= 0; i<names->Length(); i++ ) {
@@ -160,36 +208,52 @@ Handle<Value> CA::Gen(const Arguments& args) {
         }
     }
    
-    if (!X509_REQ_set_pubkey(req,obj->pkey))
-        return ThrowException(Exception::Error(String::New("error X509_REQ_set_pubkey")));
+    //if (!X509_REQ_set_pubkey(req,obj->pkey))
+    //    return ThrowException(Exception::Error(String::New("error X509_REQ_set_pubkey")));
     
-    const EVP_MD *digest = EVP_sha1();
+    //const EVP_MD *digest = EVP_sha1();
     
-    if (!X509_REQ_sign(req, obj->pkey, digest))
-        return ThrowException(Exception::Error(String::New("error X509_REQ_sign")));
+    //if (!X509_REQ_sign(req, obj->pkey, digest))
+     //   return ThrowException(Exception::Error(String::New("error X509_REQ_sign")));
    
    
     /// gen cert
    
-    X509 *xcert = X509_new();
+   
     
-    #ifdef X509_V3
-       X509_set_version(xcert, 2);
-    #endif
-    
-    ASN1_INTEGER_set(X509_get_serialNumber(xcert), 1); //random
+    int serial = 1;
+    if(arg_obj->Has(v8::String::NewSymbol("serial")))
+        serial = arg_obj->Get(v8::String::NewSymbol("serial"))->IntegerValue();
+        
+    ASN1_INTEGER_set(X509_get_serialNumber(xcert), serial); 
     
     X509_set_issuer_name(xcert,X509_get_subject_name(obj->ca_cert));
     
     //X509_gmtime_adj(X509_get_notBefore(xcert), 0);
-    ASN1_TIME_set_string(X509_get_notBefore(xcert),"000101000000-0000");
-    X509_time_adj_ex(X509_get_notAfter(xcert),50, 0, NULL);
+    //ASN1_TIME_set_string(X509_get_notBefore(xcert),"000101000000-0000");
+    time_t startTime = NULL;
+    
+    if( arg_obj->Has(v8::String::NewSymbol("startDate")) ){
+        Local<v8::Date> date = v8::Date::Cast(*arg_obj->Get(v8::String::NewSymbol("startDate")));
+        startTime = (time_t)date->NumberValue();
+    }
+    
+    X509_time_adj(X509_get_notBefore(xcert), 0, &startTime);
     
     
-    X509_set_subject_name(xcert,subj);
+    int days = 360;
+    if(arg_obj->Has(v8::String::NewSymbol("days")))
+        days = arg_obj->Get(v8::String::NewSymbol("days"))->IntegerValue();
+    
+    X509_time_adj_ex(X509_get_notAfter(xcert),days, 0, NULL);
+    
+    
+    //X509_set_subject_name(xcert,subj);
       
-    X509_set_pubkey(xcert,X509_REQ_get_pubkey(req));
+    //X509_set_pubkey(xcert,X509_REQ_get_pubkey(req));
+    X509_set_pubkey(xcert,obj->pkey);
     
+    //int OBJ_sn2nid(const char *sn); #include <openssl/objects.h>
     /* Add various extensions: standard extensions */
     add_ext(xcert, NID_basic_constraints, "critical,CA:TRUE");
     add_ext(xcert, NID_key_usage, "critical,keyCertSign,cRLSign");
