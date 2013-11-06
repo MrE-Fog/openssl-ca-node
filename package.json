@@ -1,0 +1,24 @@
+{
+  "name": "openssl-ca-node",
+  "version": "0.0.0",
+  "description": "create custom certificate for NetFree",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install": "node-gyp rebuild"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/magicode/openssl-ca-node.git"
+  },
+  "keywords": [
+    "openssl",
+    "ca"
+  ],
+  "author": "magicode",
+  "license": "",
+  "gypfile": true,
+  "bugs": {
+    "url": "https://github.com/magicode/openssl-ca-node/issues"
+  }
+}
