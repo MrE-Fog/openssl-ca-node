@@ -235,7 +235,7 @@ Handle<Value> CA::Gen(const Arguments& args) {
     
     if( arg_obj->Has(v8::String::NewSymbol("startDate")) ){
         Local<v8::Date> date = v8::Date::Cast(*arg_obj->Get(v8::String::NewSymbol("startDate")));
-        startTime = (time_t)date->NumberValue();
+        startTime = (time_t)(date->NumberValue()/1000);
     }
     
     X509_time_adj(X509_get_notBefore(xcert), 0, &startTime);
@@ -255,15 +255,12 @@ Handle<Value> CA::Gen(const Arguments& args) {
     
     //int OBJ_sn2nid(const char *sn); #include <openssl/objects.h>
     /* Add various extensions: standard extensions */
-    add_ext(xcert, NID_basic_constraints, "critical,CA:TRUE");
-    add_ext(xcert, NID_key_usage, "critical,keyCertSign,cRLSign");
-
-    add_ext(xcert, NID_subject_key_identifier, "hash");
-
-        /* Some Netscape specific extensions */
-    add_ext(xcert, NID_netscape_cert_type, "sslCA");
-
-    add_ext(xcert, NID_netscape_comment, "example comment extension");
+    //add_ext(xcert, NID_basic_constraints, "critical,CA:TRUE");
+    //add_ext(xcert, NID_key_usage, "critical,keyCertSign,cRLSign");
+    //add_ext(xcert, NID_subject_key_identifier, "hash");
+    /* Some Netscape specific extensions */
+    //add_ext(xcert, NID_netscape_cert_type, "sslCA");
+    //add_ext(xcert, NID_netscape_comment, "example comment extension");
 
     
     X509_sign(xcert, obj->ca_pkey , EVP_sha1() );
