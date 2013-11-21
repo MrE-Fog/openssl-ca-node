@@ -11,22 +11,28 @@
         ]
         ,
         'conditions': [
-                ['OS=="win"', {
-                    'include_dirs': [
-                    '<(node_root_dir)/deps/openssl/openssl/include'
+                ['OS=="win"',  {
+                      'conditions': [
+                        # "openssl_root" is the directory on Windows of the OpenSSL files
+                        ['target_arch=="x64"', {
+                          'variables': {
+                            'openssl_root%': 'C:/OpenSSL-Win64'
+                          },
+                        }, {
+                          'variables': {
+                            'openssl_root%': 'C:/OpenSSL-Win32'
+                          },
+                        }],
                       ],
-                      "conditions" : [
-                        ["target_arch=='ia32'", {
-                          "include_dirs": [ "<(node_root_dir)/deps/openssl/config/piii" ]
-                        }],
-                        ["target_arch=='x64'", {
-                          "include_dirs": [ "<(node_root_dir)/deps/openssl/config/k8" ]
-                        }],
-                        ["target_arch=='arm'", {
-                          "include_dirs": [ "<(node_root_dir)/deps/openssl/config/arm" ]
-                        }]
-                      ]
-                  
+                      'defines': [
+                        'uint=unsigned int',
+                      ],
+                      'libraries': [ 
+                        '-l<(openssl_root)/lib/libeay32.lib',
+                      ],
+                      'include_dirs': [
+                        '<(openssl_root)/include',
+                      ],
                 }, { # 'OS!="win"'
                   'libraries': [
                     '<!@(pkg-config openssl --libs)',
