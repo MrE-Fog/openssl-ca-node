@@ -1,34 +1,27 @@
-var fs = require("fs");
-
-var req = require("../").createCA();
 
 
+var fs = require('fs');
+console.log(__dirname + '/../');
 
-var pkey = fs.readFileSync(__dirname + "/master_server.key") ;
+var opensslCA = require( __dirname + '/../');
+var d = Date.now();
+var ca = opensslCA.createCA();
+ca.generatePrivateKey( 2084 ) ;
+ca.loadCA( fs.readFileSync( __dirname + '/ca/ca.key' ) , fs.readFileSync( __dirname + '/ca/ca.crt' ));
 
+console.log( "take: " + (Date.now() -d) + "ms");
 
-//req.loadPrivateKey(pkey);
-console.log(req.generatePrivateKey(2084));
-var capkey = fs.readFileSync(__dirname + "/ca.key") ;
-var ca_cert = fs.readFileSync(__dirname + "/ca.crt") ;
-console.log(req.loadCA(capkey,ca_cert));
-
-
-var d = new Date();
-
-var csr = req.createCertificate({"serial": Math.floor(Math.random()*0xffffffff) ,"startDate" :new Date(3) ,"days": 10 , "subject": { "C" :"AU" , "O": "HELLO" } });
-
+var d = Date.now();
+var count = 0;
 
 
-// 'world'var addon = require('./build/Release/ca');
-console.log("take %d", new Date() - d);
-console.log(csr); 
+ca.createCertificate({
+		"serial": Math.floor(Math.random()*0xfffffff) ,"startDate" :new Date(2010,1,1) ,"days": 300 , 
+		"subject": {  "CN" : "test.com" , "C" :"IL" , "O": "FILTER"  , "OU": "FILTER" } 
+},function(err,cert){
+	console.log(err);
+	console.log(cert);
+	console.log("take: "+  (Date.now() -d) + "ms");
+});
 
-var d = new Date();
-//var csr = req.createCertificate( { "C" :"AU" , "O": "HELLO" });
-console.log("take %d", new Date() - d);
-var d = new Date();
-//var csr = req.createCertificate( { "C" :"AU" , "O": "HELLO" });
-console.log("take %d", new Date() - d);
 
-fs.writeFileSync("csr.csr",csr);

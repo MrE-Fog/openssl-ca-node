@@ -15,10 +15,20 @@
     "openssl",
     "ca"
   ],
-  "author": "magicode",
+  "author": {
+    "name": "magicode"
+  },
   "license": "",
   "gypfile": true,
   "bugs": {
     "url": "https://github.com/magicode/openssl-ca-node/issues"
-  }
+  },
+  "readme": "openssl-ca-node\n===============\n\nopenssl ca node\n",
+  "readmeFilename": "README.md",
+  "_id": "openssl-ca-node@0.0.0",
+  "dist": {
+    "shasum": "37f33bdd5cf62307feed3dddd33076eec4cb4895"
+  },
+  "_resolved": "git+https://github.com/magicode/openssl-ca-node#3d1339d1205b8f16a13e5a8cfdd1f71d0e083076",
+  "_from": "git+https://github.com/magicode/openssl-ca-node"
 }
