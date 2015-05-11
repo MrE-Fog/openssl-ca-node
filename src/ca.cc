@@ -35,7 +35,7 @@ struct Baton {
 	X509 *xcert;
 	EVP_PKEY *ca_pkey;
 	EVP_PKEY *pkey;
-	bool self_sign;
+	bool self_signed;
 };
 
 
@@ -259,10 +259,10 @@ public:
 			}
 		}
 		
-		if (arg_obj->Has(v8::String::NewSymbol("selfSign")) && arg_obj->Get(v8::String::NewSymbol("selfSign"))->IsTrue()) {
-			baton->self_sign = true;
+		if (arg_obj->Has(v8::String::NewSymbol("selfSigned")) && arg_obj->Get(v8::String::NewSymbol("selfSigned"))->IsTrue()) {
+			baton->self_signed = true;
 		}else{
-			baton->self_sign = false;
+			baton->self_signed = false;
 		}
 		
 		//if (!X509_REQ_set_pubkey(req,obj->pkey))
@@ -281,7 +281,7 @@ public:
 
 		ASN1_INTEGER_set(X509_get_serialNumber(xcert), serial);
 		
-		X509_set_issuer_name(xcert, baton->self_sign  ? subj : X509_get_subject_name(obj->ca_cert));
+		X509_set_issuer_name(xcert, baton->self_signed  ? subj : X509_get_subject_name(obj->ca_cert));
 				//X509_gmtime_adj(X509_get_notBefore(xcert), 0);
 		//ASN1_TIME_set_string(X509_get_notBefore(xcert),"000101000000-0000");
 		time_t startTime = 0;
@@ -335,7 +335,7 @@ public:
 		//add_ext(xcert, NID_netscape_cert_type, "sslCA");
 		//add_ext(xcert, NID_netscape_comment, "example comment extension");
 
-		X509_sign(xcert, baton->self_sign ? baton->pkey : baton->ca_pkey, EVP_sha256());
+		X509_sign(xcert, baton->self_signed ? baton->pkey : baton->ca_pkey, EVP_sha256());
 
 		BIO *bp = BIO_new(BIO_s_mem());
 
