@@ -252,7 +252,7 @@ public:
 				v8::Local < v8::String > name = names->Get(i)->ToString();
 
 				if(subj_obj->Get(name)->IsString()){
-					if (!X509_NAME_add_entry_by_txt(subj, (const char*)(* String::AsciiValue(name) ) , MBSTRING_ASC,  (const unsigned char*)( * String::AsciiValue(subj_obj->Get(name))), -1,-1,0)) {
+					if (!X509_NAME_add_entry_by_txt(subj, (const char*)(* String::Utf8Value(name) ) , MBSTRING_ASC,  (const unsigned char*)( * String::Utf8Value(subj_obj->Get(name))), -1,-1,0)) {
 						return ThrowException(Exception::Error(String::New("error X509_NAME_add_entry_by_txt")));
 					}
 				}
@@ -306,7 +306,7 @@ public:
 		v8::Local<v8::String> sym_subjectAltName = v8::String::NewSymbol("subjectAltName");
 		
 		if (arg_obj->Has(sym_subjectAltName) && arg_obj->Get(sym_subjectAltName)->IsString()){
-			add_ext(xcert, NID_subject_alt_name,(const char *)(* String::AsciiValue(arg_obj->Get(sym_subjectAltName))));
+			add_ext(xcert, NID_subject_alt_name,(const char *)(* String::Utf8Value(arg_obj->Get(sym_subjectAltName))));
 		}
 		
 		int status = uv_queue_work(uv_default_loop(),
