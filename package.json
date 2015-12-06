@@ -1,6 +1,6 @@
 {
   "name": "openssl-ca-node",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "create custom certificate for NetFree",
   "main": "index.js",
   "scripts": {
@@ -18,5 +18,8 @@
   "author": {
     "name": "magicode"
   },
-  "gypfile": true
+  "gypfile": true,
+  "dependencies": {
+    "nan": "^2.1.0"
+  }
 }

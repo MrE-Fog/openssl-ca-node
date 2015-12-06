@@ -1,4 +1,5 @@
 
+#include <nan.h>
 #include <node.h>
 #include <v8.h>
 
@@ -25,7 +26,7 @@ class CA;
 
 struct Baton {
 	uv_work_t request;
-	Persistent<Function> callback;
+	Nan::Callback *callback;
 
 	char *x509_buf;
 	BIO *bp;
@@ -59,7 +60,7 @@ int add_ext(X509 *cert, int nid, const char *value) {
 }
 
 
-static Persistent<FunctionTemplate> constructor;
+Nan::Persistent<v8::Function> constructor;
 
 class CA: public ObjectWrap {
 public:
@@ -70,14 +71,21 @@ public:
 	CA() {}
 	~CA() {}
 
-	static Handle<Value> New(const Arguments& args) {
-		CA* obj = new CA();
-		obj->Wrap(args.This());
-		return args.This();
+	static void New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
+		if (info.IsConstructCall()) {
+			CA* obj = new CA();
+			obj->Wrap(info.This());
+			info.GetReturnValue().Set(info.This());
+		}else {
+		    const int argc = 1; 
+		    v8::Local<v8::Value> argv[argc] = {info[0]};
+		    v8::Local<v8::Function> cons = Nan::New(constructor);
+		    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
+		}
 	}
 
-	static Handle<Value> GenPKey(const Arguments& args) {
-		HandleScope scope;
+	static void GenPKey(const Nan::FunctionCallbackInfo<v8::Value>&  args) {
+		Nan::HandleScope scope;
 
 		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
 
@@ -90,8 +98,7 @@ public:
 		obj->pkey = EVP_PKEY_new();
 		if (!EVP_PKEY_assign_RSA(obj->pkey, rsa)) {
 			obj->pkey = NULL;
-			return ThrowException(
-					Exception::Error(String::New("error EVP_PKEY_assign_RSA")));
+			return Nan::ThrowError("error EVP_PKEY_assign_RSA");
 		}
 
 		BIO *bp = BIO_new(BIO_s_mem());
@@ -103,18 +110,18 @@ public:
 		char *rsa_buf = (char *) malloc(bptr->length + 1);
 		memcpy(rsa_buf, bptr->data, bptr->length - 1);
 		rsa_buf[bptr->length - 1] = 0;
-		Local < String > rsa_str = String::New(rsa_buf);
+		Local<String> rsa_str = Nan::New(rsa_buf).ToLocalChecked();
 		free(rsa_buf);
 
 		BIO_free(bp);
-
-		return scope.Close(rsa_str);
+		
+		args.GetReturnValue().Set(rsa_str);
 	}
 
-	static Handle<Value> LoadPKey(const Arguments& args) {
-		HandleScope scope;
+	static void LoadPKey(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+		Nan::HandleScope scope;
 
-		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
+		CA* obj = ObjectWrap::Unwrap<CA>(args.This());
 
 		char *data;
 		size_t data_len;
@@ -124,8 +131,7 @@ public:
 			data = node::Buffer::Data(buf);
 			data_len = node::Buffer::Length(buf);
 		} else
-			return ThrowException(
-					Exception::Error(String::New("PEM body must be a Buffer")));
+			return Nan::ThrowError("PEM body must be a Buffer");
 
 		BIO *bio = BIO_new_mem_buf(data, data_len);
 		obj->pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
@@ -134,15 +140,15 @@ public:
 
 
 		if (!obj->pkey)
-			return ThrowException(Exception::Error(String::New("PEM not load")));
-
-		return scope.Close(Boolean::New(1));
+			return Nan::ThrowError("PEM not load");
+		
+		args.GetReturnValue().Set(Nan::True());
 	}
 
-	static Handle<Value> LoadCA(const Arguments& args) {
-		HandleScope scope;
+	static void LoadCA(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+		Nan::HandleScope scope;
 
-		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
+		CA* obj = ObjectWrap::Unwrap <CA> (args.This());
 
 		char *data;
 		size_t data_len;
@@ -153,15 +159,13 @@ public:
 			data = node::Buffer::Data(buf);
 			data_len = node::Buffer::Length(buf);
 		} else
-			return ThrowException(
-					Exception::Error(String::New("PEM body must be a Buffer")));
+			return Nan::ThrowError("PEM body must be a Buffer");
 
 		bio = BIO_new_mem_buf(data, data_len);
 		obj->ca_pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
 
 		if (!obj->ca_pkey)
-			return ThrowException(
-					Exception::Error(String::New("ca_pkey PEM not load")));
+			return Nan::ThrowError("ca_pkey PEM not load");
 
 
 
@@ -173,8 +177,7 @@ public:
 			data = node::Buffer::Data(buf);
 			data_len = node::Buffer::Length(buf);
 		} else
-			return ThrowException(
-					Exception::Error(String::New("PEM body must be a Buffer")));
+			return Nan::ThrowError("PEM body must be a Buffer");
 
 		bio = BIO_new_mem_buf(data, data_len);
 		obj->ca_cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
@@ -182,37 +185,30 @@ public:
 		BIO_free_all(bio);
 
 		if (!obj->ca_cert)
-			return ThrowException(
-					Exception::Error(String::New("ca_cert PEM not load")));
+			return Nan::ThrowError("ca_cert PEM not load");
 
-		return scope.Close(Boolean::New(1));
+		args.GetReturnValue().Set(Nan::True());
 	}
 
-	static Handle<Value> Gen(const Arguments& args) {
-		HandleScope scope;
-		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
+	static void Gen(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+		Nan::HandleScope scope;
+		CA* obj = ObjectWrap::Unwrap<CA> (args.This());
 
 		if (args.Length() < 2) {
-			return ThrowException(
-					Exception::TypeError(String::New("Expecting 2 arguments")));
+			return Nan::ThrowError("Expecting 2 arguments");
 		}
 
 		if (!args[1]->IsFunction()) {
-			return ThrowException(
-					Exception::TypeError(
-							String::New(
-									"Second argument must be a callback function")));
+			return Nan::ThrowError("Second argument must be a callback function");
 		}
 
-		Local < Function > callback = Local < Function > ::Cast(args[1]);
-
-		Local < Object > arg_obj = args[0]->ToObject();
+		Local<Object> arg_obj = args[0]->ToObject();
 
 
 		Baton* baton = new Baton();
 		baton->error = false;
 		baton->request.data = baton;
-		baton->callback = Persistent < Function > ::New(callback);
+		baton->callback = new Nan::Callback( args[1].As<v8::Function>() );
 		baton->obj = obj;
 		baton->x509_buf = NULL ;
 		X509 *xcert = baton->xcert = X509_new();
@@ -243,23 +239,23 @@ public:
 
 		X509_NAME *subj = X509_get_subject_name(xcert);
 
-		if (arg_obj->Has(v8::String::NewSymbol("subject"))) {
+		if (arg_obj->Has(Nan::New("subject").ToLocalChecked())) {
 
-			Local < Object > subj_obj = arg_obj->Get(v8::String::NewSymbol("subject"))->ToObject();
-			Local < v8::Array > names = subj_obj->GetPropertyNames();
+			Local<Object> subj_obj = arg_obj->Get(Nan::New("subject").ToLocalChecked())->ToObject();
+			Local<v8::Array> names = subj_obj->GetPropertyNames();
 
 			for (unsigned int i = 0; i < names->Length(); i++) {
-				v8::Local < v8::String > name = names->Get(i)->ToString();
+				v8::Local<v8::String>name = names->Get(i)->ToString();
 
 				if(subj_obj->Get(name)->IsString()){
-					if (!X509_NAME_add_entry_by_txt(subj, (const char*)(* String::Utf8Value(name) ) , MBSTRING_ASC,  (const unsigned char*)( * String::Utf8Value(subj_obj->Get(name))), -1,-1,0)) {
-						return ThrowException(Exception::Error(String::New("error X509_NAME_add_entry_by_txt")));
+					if (!X509_NAME_add_entry_by_txt(subj, (const char*)(* Nan::Utf8String(name) ) , MBSTRING_ASC,  (const unsigned char*)( * Nan::Utf8String(subj_obj->Get(name))), -1,-1,0)) {
+						return Nan::ThrowError("error X509_NAME_add_entry_by_txt");
 					}
 				}
 			}
 		}
 		
-		if (arg_obj->Has(v8::String::NewSymbol("selfSigned")) && arg_obj->Get(v8::String::NewSymbol("selfSigned"))->IsTrue()) {
+		if (arg_obj->Has(Nan::New("selfSigned").ToLocalChecked()) && arg_obj->Get(Nan::New("selfSigned").ToLocalChecked())->IsTrue()) {
 			baton->self_signed = true;
 		}else{
 			baton->self_signed = false;
@@ -276,8 +272,8 @@ public:
 		/// gen cert
 
 		int serial = 1;
-		if (arg_obj->Has(v8::String::NewSymbol("serial")))
-			serial = arg_obj->Get(v8::String::NewSymbol("serial"))->IntegerValue();
+		if (arg_obj->Has(Nan::New("serial").ToLocalChecked()))
+			serial = arg_obj->Get(Nan::New("serial").ToLocalChecked())->IntegerValue();
 
 		ASN1_INTEGER_set(X509_get_serialNumber(xcert), serial);
 		
@@ -286,9 +282,9 @@ public:
 		//ASN1_TIME_set_string(X509_get_notBefore(xcert),"000101000000-0000");
 		time_t startTime = 0;
 
-		if (arg_obj->Has(v8::String::NewSymbol("startDate"))) {
-			Local < v8::Date > date = v8::Date::Cast(
-			*arg_obj->Get(v8::String::NewSymbol("startDate")));
+		if (arg_obj->Has(Nan::New("startDate").ToLocalChecked())) {
+			v8::Date * date = v8::Date::Cast((v8::Value *)*arg_obj->Get(Nan::New("startDate").ToLocalChecked()));
+			
 			startTime = (time_t)(date->NumberValue() / 1000);
 		}
 		
@@ -297,13 +293,13 @@ public:
 		X509_time_adj(X509_get_notBefore(xcert), 0, &startTime);
 
 		int days = 360;
-		if (arg_obj->Has(v8::String::NewSymbol("days")))
-		days = arg_obj->Get(v8::String::NewSymbol("days"))->IntegerValue();
+		if (arg_obj->Has(Nan::New("days").ToLocalChecked()))
+		days = arg_obj->Get(Nan::New("days").ToLocalChecked())->IntegerValue();
 
 		X509_time_adj_ex(X509_get_notAfter(xcert), days, 0, NULL);
 		
 		
-		v8::Local<v8::String> sym_subjectAltName = v8::String::NewSymbol("subjectAltName");
+		v8::Local<v8::String> sym_subjectAltName = Nan::New("subjectAltName").ToLocalChecked();
 		
 		if (arg_obj->Has(sym_subjectAltName) && arg_obj->Get(sym_subjectAltName)->IsString()){
 			add_ext(xcert, NID_subject_alt_name,(const char *)(* String::Utf8Value(arg_obj->Get(sym_subjectAltName))));
@@ -316,7 +312,7 @@ public:
 
 
 		assert(status == 0);
-		return Undefined();
+		args.GetReturnValue().SetUndefined();
 	}
 
 	static void DetectWork(uv_work_t* req) {
@@ -364,7 +360,7 @@ public:
 	}
 
 	static void DetectAfter(uv_work_t* req) {
-		HandleScope scope;
+		Nan::HandleScope scope;
 		Baton* baton = static_cast<Baton*>(req->data);
 
 		if (baton->error) {
@@ -372,21 +368,21 @@ public:
 			const unsigned argc = 1;
 			Local<Value> argv[argc] = { baton->errorValue };
 
-			TryCatch try_catch;
-			baton->callback->Call(Context::GetCurrent()->Global(), argc, argv);
+			Nan::TryCatch try_catch;
+			baton->callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
 			if (try_catch.HasCaught())
-				FatalException(try_catch);
+				Nan::FatalException(try_catch);
 		} else {
 			const unsigned argc = 2;
 			Local<Value> argv[argc] = {
-				Local<Value>::New(Null()),
-				Local<Value>::New(baton->x509_buf ? String::New(baton->x509_buf) : String::Empty())
+				Nan::Null(),
+				(baton->x509_buf ? Nan::New(baton->x509_buf).ToLocalChecked() : Nan::New("").ToLocalChecked())
 			};
 
-			TryCatch try_catch;
-			baton->callback->Call(Context::GetCurrent()->Global(), argc, argv);
+			Nan::TryCatch try_catch;
+			baton->callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
 			if (try_catch.HasCaught())
-				FatalException(try_catch);
+				Nan::FatalException(try_catch);
 		}
 
 		if(baton->bp)
@@ -397,36 +393,33 @@ public:
 
 		if(baton->pkey)
 			EVP_PKEY_free(baton->pkey);
-
-		baton->callback.Dispose();
+			
+		delete baton->callback;
 		delete baton;
 	}
 
-	static void Initialize(Handle<Object> target) {
-		HandleScope scope;
-
-		Local < FunctionTemplate > tpl = FunctionTemplate::New(New);
-		Local < String > name = String::NewSymbol("CA");
-
-		constructor = Persistent < FunctionTemplate > ::New(tpl);
-		constructor->InstanceTemplate()->SetInternalFieldCount(1);
-		constructor->SetClassName(name);
-
-		NODE_SET_PROTOTYPE_METHOD(constructor, "createCertificate", Gen);
-		NODE_SET_PROTOTYPE_METHOD(constructor, "loadPrivateKey", LoadPKey);
-		NODE_SET_PROTOTYPE_METHOD(constructor, "loadCA", LoadCA);
-		NODE_SET_PROTOTYPE_METHOD(constructor, "generatePrivateKey", GenPKey);
-
-		target->Set(name, constructor->GetFunction());
-
+	static NAN_MODULE_INIT(Initialize) {
+		Nan::HandleScope scope;
+		
+		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
+		
+		tpl->SetClassName(Nan::New("CA").ToLocalChecked());
+		tpl->InstanceTemplate()->SetInternalFieldCount(1);
+		
+		Nan::SetPrototypeMethod(tpl, "createCertificate", Gen);
+		Nan::SetPrototypeMethod(tpl, "loadPrivateKey", LoadPKey);
+		Nan::SetPrototypeMethod(tpl, "loadCA", LoadCA);
+		Nan::SetPrototypeMethod(tpl, "generatePrivateKey", GenPKey);
+		
+		constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
+		
+		Nan::Set(target, Nan::New("CA").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
 	}
 };
 
-extern "C" {
-	void init(Handle<Object> target) {
-		HandleScope scope;
-		CA::Initialize(target);
-	}
-
-	NODE_MODULE(ca, init);
+NAN_MODULE_INIT(init) {
+	CA::Initialize(target);
 }
+
+NODE_MODULE(ca, init);
+
