@@ -84,7 +84,7 @@ public:
 		}
 	}
 
-	static void GenPKey(const Nan::FunctionCallbackInfo<v8::Value>&  args) {
+	static void generatePrivateKey(const Nan::FunctionCallbackInfo<v8::Value>&  args) {
 		Nan::HandleScope scope;
 
 		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
@@ -118,7 +118,7 @@ public:
 		args.GetReturnValue().Set(rsa_str);
 	}
 
-	static void LoadPKey(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+	static void loadPrivateKey(const Nan::FunctionCallbackInfo<v8::Value>& args) {
 		Nan::HandleScope scope;
 
 		CA* obj = ObjectWrap::Unwrap<CA>(args.This());
@@ -145,7 +145,7 @@ public:
 		args.GetReturnValue().Set(Nan::True());
 	}
 
-	static void LoadCA(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+	static void loadCA(const Nan::FunctionCallbackInfo<v8::Value>& args) {
 		Nan::HandleScope scope;
 
 		CA* obj = ObjectWrap::Unwrap <CA> (args.This());
@@ -190,7 +190,7 @@ public:
 		args.GetReturnValue().Set(Nan::True());
 	}
 
-	static void Gen(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+	static void createCertificate(const Nan::FunctionCallbackInfo<v8::Value>& args) {
 		Nan::HandleScope scope;
 		CA* obj = ObjectWrap::Unwrap<CA> (args.This());
 
@@ -248,7 +248,7 @@ public:
 				v8::Local<v8::String>name = names->Get(i)->ToString();
 
 				if(subj_obj->Get(name)->IsString()){
-					if (!X509_NAME_add_entry_by_txt(subj, (const char*)(* Nan::Utf8String(name) ) , MBSTRING_ASC,  (const unsigned char*)( * Nan::Utf8String(subj_obj->Get(name))), -1,-1,0)) {
+					if (!X509_NAME_add_entry_by_txt(subj, (const char*)( *Nan::Utf8String(name) ) , MBSTRING_ASC,  (const unsigned char*)( *Nan::Utf8String(subj_obj->Get(name))), -1,-1,0)) {
 						return Nan::ThrowError("error X509_NAME_add_entry_by_txt");
 					}
 				}
@@ -302,7 +302,7 @@ public:
 		v8::Local<v8::String> sym_subjectAltName = Nan::New("subjectAltName").ToLocalChecked();
 		
 		if (arg_obj->Has(sym_subjectAltName) && arg_obj->Get(sym_subjectAltName)->IsString()){
-			add_ext(xcert, NID_subject_alt_name,(const char *)(* String::Utf8Value(arg_obj->Get(sym_subjectAltName))));
+			add_ext(xcert, NID_subject_alt_name,(const char *)(*Nan::Utf8String(arg_obj->Get(sym_subjectAltName))));
 		}
 		
 		int status = uv_queue_work(uv_default_loop(),
@@ -344,16 +344,16 @@ public:
 		PEM_write_bio_X509(bp, xcert);
 		X509_free(xcert);
 
-		BUF_MEM *bptr;
-		BIO_get_mem_ptr(bp, &bptr);
+		//BUF_MEM *bptr;
+		//BIO_get_mem_ptr(bp, &bptr);
 		//char *x509_buf = (char *) malloc(bptr->length+1);
 		//memcpy(x509_buf, bptr->data, bptr->length-1);
 		//x509_buf[bptr->length-1] = 0;
 		//Local<String> x509_str = String::New(x509_buf);
 
 		//free(x509_buf);
-		bptr->data[bptr->length - 1] = 0;
-		baton->x509_buf = bptr->data;
+		//bptr->data[bptr->length - 1] = 0;
+		//baton->x509_buf = bptr->data;
 		baton->bp = bp;
 		//BIO_free(bp);
 
@@ -363,7 +363,7 @@ public:
 		Nan::HandleScope scope;
 		Baton* baton = static_cast<Baton*>(req->data);
 
-		if (baton->error) {
+		if (baton->error || !baton->bp) {
 
 			const unsigned argc = 1;
 			Local<Value> argv[argc] = { baton->errorValue };
@@ -373,10 +373,14 @@ public:
 			if (try_catch.HasCaught())
 				Nan::FatalException(try_catch);
 		} else {
+			
+			BUF_MEM *bptr;
+			BIO_get_mem_ptr(baton->bp, &bptr);
+			
 			const unsigned argc = 2;
 			Local<Value> argv[argc] = {
 				Nan::Null(),
-				(baton->x509_buf ? Nan::New(baton->x509_buf).ToLocalChecked() : Nan::New("").ToLocalChecked())
+				( bptr->data ? Nan::New<v8::String>( bptr->data , bptr->length ).ToLocalChecked() : Nan::EmptyString() )
 			};
 
 			Nan::TryCatch try_catch;
@@ -406,10 +410,10 @@ public:
 		tpl->SetClassName(Nan::New("CA").ToLocalChecked());
 		tpl->InstanceTemplate()->SetInternalFieldCount(1);
 		
-		Nan::SetPrototypeMethod(tpl, "createCertificate", Gen);
-		Nan::SetPrototypeMethod(tpl, "loadPrivateKey", LoadPKey);
-		Nan::SetPrototypeMethod(tpl, "loadCA", LoadCA);
-		Nan::SetPrototypeMethod(tpl, "generatePrivateKey", GenPKey);
+		Nan::SetPrototypeMethod(tpl, "createCertificate", createCertificate);
+		Nan::SetPrototypeMethod(tpl, "loadPrivateKey", loadPrivateKey);
+		Nan::SetPrototypeMethod(tpl, "loadCA", loadCA);
+		Nan::SetPrototypeMethod(tpl, "generatePrivateKey", generatePrivateKey);
 		
 		constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
 		
