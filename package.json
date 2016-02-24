@@ -1,6 +1,6 @@
 {
   "name": "openssl-ca-node",
-  "version": "0.2.2",
+  "version": "1.0.0",
   "description": "create custom certificate for NetFree",
   "main": "index.js",
   "scripts": {

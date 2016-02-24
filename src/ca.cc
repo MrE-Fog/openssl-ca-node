@@ -24,21 +24,20 @@ using namespace v8;
 
 class CA;
 
-struct Baton {
-	uv_work_t request;
-	Nan::Callback *callback;
 
-	char *x509_buf;
-	BIO *bp;
-	bool error;
-	Local < Value > errorValue ;
-	CA* obj;
+class MakeCertWorker : public Nan::AsyncWorker {
+	public:
+	MakeCertWorker(Nan::Callback *callback) : Nan::AsyncWorker(callback) {}
+	~MakeCertWorker() {}
+	
+	void Execute();
+	void HandleOKCallback();
+	
+	BIO *bp_xcert;
 	X509 *xcert;
-	EVP_PKEY *ca_pkey;
-	EVP_PKEY *pkey;
+	CA *obj;
 	bool self_signed;
 };
-
 
 int add_ext(X509 *cert, int nid, const char *value) {
 	X509_EXTENSION *ex;
@@ -60,35 +59,101 @@ int add_ext(X509 *cert, int nid, const char *value) {
 }
 
 
-Nan::Persistent<v8::Function> constructor;
 
-class CA: public ObjectWrap {
-public:
+class CA: public Nan::ObjectWrap {
+	public:
+
 	EVP_PKEY *pkey;
 	EVP_PKEY *ca_pkey;
 	X509 *ca_cert;
-
-	CA() {}
-	~CA() {}
-
-	static void New(const Nan::FunctionCallbackInfo<v8::Value>& info) {
-		if (info.IsConstructCall()) {
-			CA* obj = new CA();
-			obj->Wrap(info.This());
-			obj->Ref();
-			info.GetReturnValue().Set(info.This());
-		}else {
-		    const int argc = 1; 
-		    v8::Local<v8::Value> argv[argc] = {info[0]};
-		    v8::Local<v8::Function> cons = Nan::New(constructor);
-		    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
-		}
+	
+	static inline Nan::Persistent<v8::Function> & constructor() {
+    	static Nan::Persistent<v8::Function> my_constructor;
+    	return my_constructor;
 	}
 
+	
+	static BIO * buffer2bio( v8::Local<v8::Value> val ){
+		Nan::HandleScope scope;
+		char *data;
+		size_t data_len;
+		
+		//Local<Object> obj = val->ToObject();
+		
+		if (node::Buffer::HasInstance(val)) {
+			data = node::Buffer::Data(val);
+			data_len = node::Buffer::Length(val);
+		} else
+			return NULL;
+		
+		BIO *bio = BIO_new_mem_buf(data, data_len);
+
+		return bio;
+	}
+	
+	CA(EVP_PKEY *_pkey,EVP_PKEY *_ca_pkey,X509 *_ca_cert) {
+		pkey = _pkey;
+		ca_pkey = _ca_pkey;
+		ca_cert = _ca_cert;
+		CRYPTO_add(&pkey->references, 10, CRYPTO_LOCK_EVP_PKEY);
+		CRYPTO_add(&ca_pkey->references, 10, CRYPTO_LOCK_EVP_PKEY);
+
+	}
+	
+	~CA() {
+		
+		if(pkey) EVP_PKEY_free(pkey);
+		if(ca_pkey) EVP_PKEY_free(ca_pkey);
+		if(ca_cert) X509_free(ca_cert);
+		
+	}
+
+	static NAN_METHOD(New) {
+		if (!info.IsConstructCall()) {
+		    const int argc = 1; 
+		    v8::Local<v8::Value> argv[argc] = {info[0]};
+		    v8::Local<v8::Function> cons = Nan::New(constructor());
+		    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
+		    return;
+		}
+		
+		EVP_PKEY *pkey;
+		EVP_PKEY *ca_pkey;
+		X509 *ca_cert;
+		
+		
+		BIO *bp;
+		
+		bp = buffer2bio(info[0]);
+		if(!bp) return Nan::ThrowError("error PKEY"); 
+		pkey = PEM_read_bio_PrivateKey(bp, NULL, NULL, NULL);
+		BIO_free_all(bp);
+		if(!pkey) return Nan::ThrowError("error load PKEY"); 
+		
+		bp = buffer2bio(info[1]);
+		if(!bp) return Nan::ThrowError("error CA PKEY");
+		ca_pkey = PEM_read_bio_PrivateKey(bp, NULL, NULL, NULL);
+		BIO_free_all(bp);
+		if(!ca_pkey) return Nan::ThrowError("error load CA PKEY"); 
+
+		bp = buffer2bio(info[2]);
+		if(!bp) Nan::ThrowError("error CA CERT"); 
+		ca_cert = PEM_read_bio_X509(bp, NULL, NULL, NULL);
+		BIO_free_all(bp);
+		
+		if(!ca_cert) return Nan::ThrowError("error load CA CERT");
+			
+
+		
+		CA* obj = new CA(pkey,ca_pkey,ca_cert);
+		
+		obj->Wrap(info.This());
+		//obj->Ref();
+		info.GetReturnValue().Set(info.This());
+	}
+	
 	static void generatePrivateKey(const Nan::FunctionCallbackInfo<v8::Value>&  args) {
 		Nan::HandleScope scope;
-
-		CA* obj = ObjectWrap::Unwrap < CA > (args.This());
 
 		int bits = 1024;
 
@@ -96,9 +161,9 @@ public:
 			bits = args[0]->NumberValue();
 
 		RSA* rsa = RSA_generate_key(bits, RSA_F4, NULL, NULL);
-		obj->pkey = EVP_PKEY_new();
-		if (!EVP_PKEY_assign_RSA(obj->pkey, rsa)) {
-			obj->pkey = NULL;
+		EVP_PKEY *pkey = EVP_PKEY_new();
+		if (!EVP_PKEY_assign_RSA(pkey, rsa)) {
+			pkey = NULL;
 			return Nan::ThrowError("error EVP_PKEY_assign_RSA");
 		}
 
@@ -108,92 +173,17 @@ public:
 
 		BUF_MEM *bptr;
 		BIO_get_mem_ptr(bp, &bptr);
-		char *rsa_buf = (char *) malloc(bptr->length + 1);
-		memcpy(rsa_buf, bptr->data, bptr->length - 1);
-		rsa_buf[bptr->length - 1] = 0;
-		Local<String> rsa_str = Nan::New(rsa_buf).ToLocalChecked();
-		free(rsa_buf);
-
+		Local<String> rsa_str = Nan::New<v8::String>( (char *)bptr->data , bptr->length ).ToLocalChecked();;
 		BIO_free(bp);
+		EVP_PKEY_free(pkey);
 		
 		args.GetReturnValue().Set(rsa_str);
 	}
 
-	static void loadPrivateKey(const Nan::FunctionCallbackInfo<v8::Value>& args) {
-		Nan::HandleScope scope;
-
-		CA* obj = ObjectWrap::Unwrap<CA>(args.This());
-
-		char *data;
-		size_t data_len;
-
-		if (node::Buffer::HasInstance(args[0])) {
-			Local < Object > buf = args[0]->ToObject();
-			data = node::Buffer::Data(buf);
-			data_len = node::Buffer::Length(buf);
-		} else
-			return Nan::ThrowError("PEM body must be a Buffer");
-
-		BIO *bio = BIO_new_mem_buf(data, data_len);
-		obj->pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-
-		BIO_free_all(bio);
-
-
-		if (!obj->pkey)
-			return Nan::ThrowError("PEM not load");
-		
-		args.GetReturnValue().Set(Nan::True());
-	}
-
-	static void loadCA(const Nan::FunctionCallbackInfo<v8::Value>& args) {
-		Nan::HandleScope scope;
-
-		CA* obj = ObjectWrap::Unwrap <CA> (args.This());
-
-		char *data;
-		size_t data_len;
-		BIO *bio;
-
-		if (node::Buffer::HasInstance(args[0])) {
-			Local < Object > buf = args[0]->ToObject();
-			data = node::Buffer::Data(buf);
-			data_len = node::Buffer::Length(buf);
-		} else
-			return Nan::ThrowError("PEM body must be a Buffer");
-
-		bio = BIO_new_mem_buf(data, data_len);
-		obj->ca_pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-
-		if (!obj->ca_pkey)
-			return Nan::ThrowError("ca_pkey PEM not load");
-
-
-
-
-		BIO_free_all(bio);
-
-		if (node::Buffer::HasInstance(args[1])) {
-			Local < Object > buf = args[1]->ToObject();
-			data = node::Buffer::Data(buf);
-			data_len = node::Buffer::Length(buf);
-		} else
-			return Nan::ThrowError("PEM body must be a Buffer");
-
-		bio = BIO_new_mem_buf(data, data_len);
-		obj->ca_cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
-
-		BIO_free_all(bio);
-
-		if (!obj->ca_cert)
-			return Nan::ThrowError("ca_cert PEM not load");
-
-		args.GetReturnValue().Set(Nan::True());
-	}
-
 	static void createCertificate(const Nan::FunctionCallbackInfo<v8::Value>& args) {
+		
 		Nan::HandleScope scope;
-		CA* obj = ObjectWrap::Unwrap<CA> (args.This());
+		CA* obj = ObjectWrap::Unwrap<CA>(args.This());
 
 		if (args.Length() < 2) {
 			return Nan::ThrowError("Expecting 2 arguments");
@@ -204,17 +194,13 @@ public:
 		}
 
 		Local<Object> arg_obj = args[0]->ToObject();
-
-
-		Baton* baton = new Baton();
-		baton->error = false;
-		baton->request.data = baton;
-		baton->callback = new Nan::Callback( args[1].As<v8::Function>() );
-		baton->obj = obj;
-		baton->x509_buf = NULL ;
-		X509 *xcert = baton->xcert = X509_new();
-		baton->bp = NULL;
-
+		
+		Nan::Callback *callback = new Nan::Callback(args[1].As<v8::Function>());
+		MakeCertWorker* worker = new MakeCertWorker(callback);
+		
+		X509 *xcert = worker->xcert = X509_new();
+		worker->obj = obj;
+		
 /*
 		baton->ca_pkey = EVP_PKEY_new();
 		baton->pkey = EVP_PKEY_new();
@@ -223,11 +209,16 @@ public:
 		EVP_PKEY_copy_parameters(baton->pkey,obj->pkey);
 */
 
+/*
 		baton->ca_pkey = obj->ca_pkey;
 		baton->pkey = obj->pkey;
 
 		CRYPTO_add(&obj->ca_pkey->references, 2, CRYPTO_LOCK_EVP_PKEY);
 		CRYPTO_add(&obj->pkey->references, 2, CRYPTO_LOCK_EVP_PKEY);
+*/
+
+
+// set X509 cert
 
 		X509_set_version(xcert, 2);
 		// #endif
@@ -257,9 +248,9 @@ public:
 		}
 		
 		if (arg_obj->Has(Nan::New("selfSigned").ToLocalChecked()) && arg_obj->Get(Nan::New("selfSigned").ToLocalChecked())->IsTrue()) {
-			baton->self_signed = true;
+			worker->self_signed = true;
 		}else{
-			baton->self_signed = false;
+			worker->self_signed = false;
 		}
 		
 		//if (!X509_REQ_set_pubkey(req,obj->pkey))
@@ -278,7 +269,7 @@ public:
 
 		ASN1_INTEGER_set(X509_get_serialNumber(xcert), serial);
 		
-		X509_set_issuer_name(xcert, baton->self_signed  ? subj : X509_get_subject_name(obj->ca_cert));
+		X509_set_issuer_name(xcert, worker->self_signed  ? subj : X509_get_subject_name(obj->ca_cert));
 				//X509_gmtime_adj(X509_get_notBefore(xcert), 0);
 		//ASN1_TIME_set_string(X509_get_notBefore(xcert),"000101000000-0000");
 		time_t startTime = 0;
@@ -306,28 +297,46 @@ public:
 			add_ext(xcert, NID_subject_alt_name,(const char *)(*Nan::Utf8String(arg_obj->Get(sym_subjectAltName))));
 		}
 		
-		int status = uv_queue_work(uv_default_loop(),
-		&baton->request,
-		CA::DetectWork,
-		(uv_after_work_cb)CA::DetectAfter);
-
-
-		assert(status == 0);
+		
+		Nan::AsyncQueueWorker(worker);
+		
 		args.GetReturnValue().SetUndefined();
 	}
 
-	static void DetectWork(uv_work_t* req) {
+	static NAN_MODULE_INIT(Initialize) {
+		Nan::HandleScope scope;
+		
+		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
+		
+		tpl->SetClassName(Nan::New("CA").ToLocalChecked());
+		tpl->InstanceTemplate()->SetInternalFieldCount(1);
+		
+		Nan::SetPrototypeMethod(tpl, "createCertificate", createCertificate);
+		//Nan::SetPrototypeMethod(tpl, "generatePrivateKey", generatePrivateKey);
+		
+		constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
+		
+		Nan::Set(target, Nan::New("CA").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
+		Nan::Set(Nan::GetFunction(tpl).ToLocalChecked(), Nan::New<String>("generatePrivateKey").ToLocalChecked(), Nan::GetFunction(Nan::New<FunctionTemplate>(generatePrivateKey)).ToLocalChecked());
+    
+	}
+};
 
-		Baton* baton = static_cast<Baton*>(req->data);
 
 
-		//CA* obj = baton->obj;
-		X509 *xcert = baton->xcert;
+
+
+	// Executed inside the worker-thread.
+	// It is not safe to access V8, or V8 data structures
+	// here, so everything we need for input and output
+	// should go on `this`.
+void MakeCertWorker::Execute () {
+
 
 		//X509_set_subject_name(xcert,subj);
 
 		//X509_set_pubkey(xcert,X509_REQ_get_pubkey(req));
-		X509_set_pubkey(xcert, baton->pkey);
+		X509_set_pubkey(xcert, obj->pkey);
 
 		//int OBJ_sn2nid(const char *sn); #include <openssl/objects.h>
 		/* Add various extensions: standard extensions */
@@ -338,11 +347,11 @@ public:
 		//add_ext(xcert, NID_netscape_cert_type, "sslCA");
 		//add_ext(xcert, NID_netscape_comment, "example comment extension");
 
-		X509_sign(xcert, baton->self_signed ? baton->pkey : baton->ca_pkey, EVP_sha256());
+		X509_sign(xcert, self_signed ? obj->pkey : obj->ca_pkey, EVP_sha256());
 
-		BIO *bp = BIO_new(BIO_s_mem());
+		bp_xcert = BIO_new(BIO_s_mem());
 
-		PEM_write_bio_X509(bp, xcert);
+		PEM_write_bio_X509(bp_xcert, xcert);
 		X509_free(xcert);
 
 		//BUF_MEM *bptr;
@@ -355,72 +364,48 @@ public:
 		//free(x509_buf);
 		//bptr->data[bptr->length - 1] = 0;
 		//baton->x509_buf = bptr->data;
-		baton->bp = bp;
 		//BIO_free(bp);
+}
 
-	}
+	// Executed when the async work is complete
+	// this function will be run inside the main event loop
+	// so it is safe to use V8 again
+void MakeCertWorker::HandleOKCallback () {
+ 		Nan::HandleScope scope;
 
-	static void DetectAfter(uv_work_t* req) {
-		Nan::HandleScope scope;
-		Baton* baton = static_cast<Baton*>(req->data);
-
-		if (baton->error || !baton->bp) {
-
+		if (!xcert) {
+			
+			Local<Value> err = Exception::Error(Nan::New("error").ToLocalChecked());
 			const unsigned argc = 1;
-			Local<Value> argv[argc] = { baton->errorValue };
+			Local<Value> argv[argc] = { err };
 
 			Nan::TryCatch try_catch;
-			baton->callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
+			callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
 			if (try_catch.HasCaught())
 				Nan::FatalException(try_catch);
+				
 		} else {
 			
 			BUF_MEM *bptr;
-			BIO_get_mem_ptr(baton->bp, &bptr);
+			BIO_get_mem_ptr(bp_xcert, &bptr);
 			
 			const unsigned argc = 2;
 			Local<Value> argv[argc] = {
-				Nan::Null(),
-				( bptr->data ? Nan::New<v8::String>( bptr->data , bptr->length ).ToLocalChecked() : Nan::EmptyString() )
+				Nan::Null(), ( bptr->data ? Nan::New<v8::String>( bptr->data , bptr->length ).ToLocalChecked() : Nan::EmptyString() )
 			};
 
 			Nan::TryCatch try_catch;
-			baton->callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
+			callback->Call(Nan::GetCurrentContext()->Global(), argc, argv);
 			if (try_catch.HasCaught())
 				Nan::FatalException(try_catch);
 		}
 
-		if(baton->bp)
-			BIO_free(baton->bp);
+		if(bp_xcert)
+			BIO_free(bp_xcert);
+}
 
-		if(baton->ca_pkey)
-			EVP_PKEY_free(baton->ca_pkey);
 
-		if(baton->pkey)
-			EVP_PKEY_free(baton->pkey);
-			
-		delete baton->callback;
-		delete baton;
-	}
 
-	static NAN_MODULE_INIT(Initialize) {
-		Nan::HandleScope scope;
-		
-		v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
-		
-		tpl->SetClassName(Nan::New("CA").ToLocalChecked());
-		tpl->InstanceTemplate()->SetInternalFieldCount(1);
-		
-		Nan::SetPrototypeMethod(tpl, "createCertificate", createCertificate);
-		Nan::SetPrototypeMethod(tpl, "loadPrivateKey", loadPrivateKey);
-		Nan::SetPrototypeMethod(tpl, "loadCA", loadCA);
-		Nan::SetPrototypeMethod(tpl, "generatePrivateKey", generatePrivateKey);
-		
-		constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
-		
-		Nan::Set(target, Nan::New("CA").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
-	}
-};
 
 NAN_MODULE_INIT(init) {
 	CA::Initialize(target);

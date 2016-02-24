@@ -5,9 +5,10 @@ console.log(__dirname + '/../');
 
 var opensslCA = require( __dirname + '/../');
 var d = Date.now();
-var ca = opensslCA.createCA();
-ca.generatePrivateKey( 2084 ) ;
-ca.loadCA( fs.readFileSync( __dirname + '/ca.key' ) , fs.readFileSync( __dirname + '/ca.crt' ));
+
+var pkey = opensslCA.generatePrivateKey(2084);
+
+var ca = new opensslCA(new Buffer(pkey),fs.readFileSync( __dirname + '/ca.key' ),fs.readFileSync( __dirname + '/ca.crt' ));
 
 console.log( "take: " + (Date.now() -d) + "ms");
 
