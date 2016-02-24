@@ -75,6 +75,7 @@ public:
 		if (info.IsConstructCall()) {
 			CA* obj = new CA();
 			obj->Wrap(info.This());
+			obj->Ref();
 			info.GetReturnValue().Set(info.This());
 		}else {
 		    const int argc = 1; 
